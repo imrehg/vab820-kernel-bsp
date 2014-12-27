@@ -1215,7 +1215,7 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 {
 	struct imx_port *sport = (struct imx_port *)port;
 	unsigned long flags;
-	unsigned int ucr2, old_ucr1, old_txrxen, baud, quot;
+	unsigned int ucr2, old_ucr1, old_ucr3, old_txrxen, baud, quot;
 	unsigned int old_csize = old ? old->c_cflag & CSIZE : CS8;
 	unsigned int div, ufcr;
 	unsigned long num, denom;
@@ -1305,6 +1305,11 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 	old_ucr1 = readl(sport->port.membase + UCR1);
 	writel(old_ucr1 & ~(UCR1_TXMPTYEN | UCR1_RRDYEN | UCR1_RTSDEN),
 			sport->port.membase + UCR1);
+
+	//(Peter)
+	//Disable RI and DCD
+	old_ucr3 = readl(sport->port.membase + UCR3);
+        writel(old_ucr3 & ~(UCR3_RI | UCR3_DCD), sport->port.membase + UCR3);
 
 	while ( !(readl(sport->port.membase + USR2) & USR2_TXDC))
 		barrier();
@@ -1578,6 +1583,9 @@ imx_console_write(struct console *co, const char *s, unsigned int count)
 	writel(ucr1, sport->port.membase + UCR1);
 
 	writel(old_ucr.ucr2 | UCR2_TXEN, sport->port.membase + UCR2);
+
+	//(Peter) Disable RI
+	//writel(old_ucr.ucr3 & 0xeff, sport->port.membase + UCR3);
 
 	uart_console_write(&sport->port, s, count, imx_console_putchar);
 

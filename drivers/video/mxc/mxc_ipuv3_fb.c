@@ -47,6 +47,7 @@
 #include <linux/uaccess.h>
 #include <linux/fsl_devices.h>
 #include <asm/mach-types.h>
+#include <linux/delay.h>
 #include <mach/ipu-v3.h>
 #include "mxc_dispdrv.h"
 
@@ -2280,6 +2281,38 @@ static int mxcfb_probe(struct platform_device *pdev)
 		/* Do not clear the fb content drawn in bootloader. */
 		if (!mxcfbi->late_init)
 			memset(fbi->screen_base, 0, fbi->fix.smem_len);
+	} else {
+#if 0
+		if (num_registered_fb == 0) {// For fb0
+			fbi->fix.smem_len = 32*1024*1024; // Set to 32M default, will modify it for dual display RADNR
+			fbi->screen_base = dma_alloc_writecombine(fbi->device,
+												fbi->fix.smem_len,
+								(dma_addr_t *)&fbi->fix.smem_start,
+											GFP_DMA | GFP_KERNEL);
+			if (fbi->screen_base == 0){
+				dev_err(fbi->device, "Unable to allocate 32M framebuffer memory for fb0 in probe by dma_alloc_writecombine\n");
+				fbi->fix.smem_start = 0;
+				fbi->fix.smem_len = 0;
+			} else {
+				dev_dbg(fbi->device, "allocated fb @ paddr=0x%08X, size=%d.\n",
+						(uint32_t) fbi->fix.smem_start, fbi->fix.smem_len);
+
+				fbi->screen_size = fbi->fix.smem_len;
+				/* Clear the screen */
+				memset((char *)fbi->screen_base, 0, fbi->fix.smem_len);
+				//TODO: set the virtualX and virtual Y to be the size of virtual screen in X window.
+			}
+		}else if (num_registered_fb == 2) {
+			//TODO: We do not need to alloc new memory for fb2, just use the same memory as fb0
+
+			fbi->fix.smem_len 	= registered_fb[0]->fix.smem_len;
+			fbi->fix.smem_start = registered_fb[0]->fix.smem_start;
+			fbi->screen_base    = registered_fb[0]->screen_base;
+			fbi->screen_size    = registered_fb[0]->screen_size;
+			//TODO: set the virtualX and virtual Y to be the size of virtual screen in X window.
+		
+		}
+#endif
 	}
 
 	mxcfbi->ipu = ipu_get_soc(mxcfbi->ipu_id);
@@ -2356,6 +2389,11 @@ static int mxcfb_probe(struct platform_device *pdev)
 				    " device propety\n", ret);
 
 #ifdef CONFIG_LOGO
+	/*
+	 * We need to wait HDMI to be inited well, otherwise the boot logo will not be shown.
+	 */
+	if (!strncmp(plat_data->disp_dev, "hdmi", 4))
+		msleep(500); 
 	fb_prepare_logo(fbi, 0);
 	fb_show_logo(fbi, 0);
 #endif

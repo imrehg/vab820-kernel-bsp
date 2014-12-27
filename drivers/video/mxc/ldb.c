@@ -38,6 +38,8 @@
 #include <linux/fsl_devices.h>
 #include <mach/hardware.h>
 #include <mach/clock.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
 #include "mxc_dispdrv.h"
 
 #define DISPDRV_LDB	"ldb"
@@ -77,6 +79,8 @@
 #define LDB_CH0_MODE_DISABLE		0x0
 
 #define LDB_SPLIT_MODE_EN		0x00000010
+#define IMX_GPIO_NR(bank, nr)		(((bank) - 1) * 32 + (nr))
+#define MX6Q_SABRELITE_GPIO6_15		IMX_GPIO_NR(6, 15)
 
 struct ldb_data {
 	struct platform_device *pdev;
@@ -102,6 +106,8 @@ struct ldb_data {
 };
 
 static int g_ldb_mode;
+static __iomem *lvdsen_reg_base1 = 0;
+static int __ldb_current_status = -1;
 
 static struct fb_videomode ldb_modedb[] = {
 	{
@@ -125,6 +131,22 @@ static struct fb_videomode ldb_modedb[] = {
 	 100, 40,
 	 30, 3,
 	 10, 2,
+	 0,
+	 FB_VMODE_NONINTERLACED,
+	 FB_MODE_IS_DETAILED,},
+	 {
+	 "LDB-SXGA", 60, 1280, 1024, KHZ2PICOS(108000),
+	 248, 48,
+	 38, 1,
+	 112, 3,
+	 0,
+	 FB_VMODE_NONINTERLACED,
+	 FB_MODE_IS_DETAILED,},
+	 {
+	 "LDB-WSXGA+", 60, 1680, 1050, KHZ2PICOS(146250),
+	 280, 104,
+	 30, 3,
+	 176, 6,
 	 0,
 	 FB_VMODE_NONINTERLACED,
 	 FB_MODE_IS_DETAILED,},
@@ -316,6 +338,36 @@ int ldb_fb_event(struct notifier_block *nb, unsigned long val, void *v)
 				clk_enable(ldb->setting[index].ldb_di_clk);
 				ldb->setting[index].clk_en = true;
 			}
+
+			/* Pull up the LVDS_EN (Backlight) */
+			/* We need to keep the same logic as mxcfb_blank. If current status is already UNBLANK 
+			 * Some utilitys, such as x11perf, will call FB_BLANK_UNBLANK after they draw one frame, 
+			 * in this case, if we still go on setting, the screen will have twinkle¡C
+    		 */
+			if (lvdsen_reg_base1 && (__ldb_current_status != FB_BLANK_UNBLANK)){
+				// Select mux mode: ALT5 mux port: GPIO[15] of instance: gpio6
+				int reg_val = 0;
+				reg_val = readl(lvdsen_reg_base1);
+				reg_val &= 0xfffffff8;
+				reg_val |= 0x5; // [2:0] = 101; 
+				writel(reg_val, lvdsen_reg_base1);
+				
+				// Set GPIO6[15] to high
+				{
+					gpio_request(MX6Q_SABRELITE_GPIO6_15, "gpio6_15");
+					gpio_direction_output(MX6Q_SABRELITE_GPIO6_15, 1);
+					msleep(100);
+					
+					// Sometis, the LVDS panel can not be lighted after reboot, but can be actived in user space
+					// by operating the sysfs node, so we did the same action as user space did.
+					gpio_set_value(MX6Q_SABRELITE_GPIO6_15, 0); 
+					msleep(200);
+					gpio_set_value(MX6Q_SABRELITE_GPIO6_15, 1);
+
+					// If do not release it, user space can not operate gpio by sysfs.
+					gpio_free(MX6Q_SABRELITE_GPIO6_15);
+				}
+			}
 		} else {
 			if (ldb->setting[index].clk_en) {
 				clk_disable(ldb->setting[index].ldb_di_clk);
@@ -328,6 +380,7 @@ int ldb_fb_event(struct notifier_block *nb, unsigned long val, void *v)
 						readl(ldb->control_reg));
 			}
 		}
+		__ldb_current_status = *((int *)event->data); // Save the blank status
 		break;
 	}
 	case FB_EVENT_SUSPEND:
@@ -816,6 +869,13 @@ static int ldb_probe(struct platform_device *pdev)
 	mxc_dispdrv_setdata(ldb->disp_ldb, ldb);
 
 	dev_set_drvdata(&pdev->dev, ldb);
+
+	// Remap for seting NANDF_CS2 to work as GPIO6[15];
+	lvdsen_reg_base1 = ioremap(0x020e02ec, 4);
+	if (lvdsen_reg_base1 == NULL) {
+		printk("%s %d: ioremap for lvds_en failed!\n", __FUNCTION__,__LINE__);
+		goto alloc_failed;
+	}
 
 alloc_failed:
 	return ret;

@@ -287,6 +287,8 @@ static int flexcan_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	const struct flexcan_priv *priv = netdev_priv(dev);
 	struct flexcan_regs __iomem *regs = priv->base;
 	struct can_frame *cf = (struct can_frame *)skb->data;
+	//Ken add net_device_stats
+	struct net_device_stats *stats = &dev->stats;
 	u32 can_id;
 	u32 ctrl = FLEXCAN_MB_CNT_CODE(0xc) | (cf->can_dlc << 16);
 
@@ -314,7 +316,8 @@ static int flexcan_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		writel(data, &regs->cantxfg[FLEXCAN_TX_BUF_ID].data[1]);
 	}
 
-	can_put_echo_skb(skb, dev, 0);
+	// Ken marked
+	//can_put_echo_skb(skb, dev, 0);
 
 	writel(can_id, &regs->cantxfg[FLEXCAN_TX_BUF_ID].can_id);
 	writel(ctrl, &regs->cantxfg[FLEXCAN_TX_BUF_ID].can_ctrl);
@@ -323,6 +326,10 @@ static int flexcan_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		writel(0x0, &regs->cantxfg[FLEXCAN_RESERVED_BUF_ID].can_ctrl);
 		writel(0x0, &regs->cantxfg[FLEXCAN_RESERVED_BUF_ID].can_ctrl);
 	}
+
+	/* Ken add tx packet count */
+	stats->tx_bytes += cf->can_dlc;
+        stats->tx_packets++;
 
 	return NETDEV_TX_OK;
 }
@@ -591,7 +598,8 @@ static int flexcan_poll(struct napi_struct *napi, int quota)
 static irqreturn_t flexcan_irq(int irq, void *dev_id)
 {
 	struct net_device *dev = dev_id;
-	struct net_device_stats *stats = &dev->stats;
+	// Ken modify
+	//struct net_device_stats *stats = &dev->stats;
 	struct flexcan_priv *priv = netdev_priv(dev);
 	struct flexcan_regs __iomem *regs = priv->base;
 	u32 reg_iflag1, reg_esr;
@@ -635,8 +643,10 @@ static irqreturn_t flexcan_irq(int irq, void *dev_id)
 
 	/* transmission complete interrupt */
 	if (reg_iflag1 & (1 << FLEXCAN_TX_BUF_ID)) {
-		stats->tx_bytes += can_get_echo_skb(dev, 0);
-		stats->tx_packets++;
+		/* Ken modify that disable can_get_echo_skb and 
+		   stats->tx* counters in flexcan_start_xmit() */
+		//stats->tx_bytes += can_get_echo_skb(dev, 0);
+		//stats->tx_packets++;
 		writel((1 << FLEXCAN_TX_BUF_ID), &regs->iflag1);
 		netif_wake_queue(dev);
 	}
